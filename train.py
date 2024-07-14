@@ -2,7 +2,9 @@ import os
 import sys
 import json
 import time
+import random
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -11,20 +13,41 @@ from tqdm import tqdm
 
 from model import resnet50
 
+# 设置随机种子
+seed = 42
+torch.manual_seed(seed)  # 设置 PyTorch 的随机种子
+random.seed(seed)  # 设置 Python 内置的随机种子
+np.random.seed(seed)  # 设置 numpy 的随机种子
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)  # 设置所有 GPU 设备的随机种子
+
+# 设置 cuDNN 的确定性
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
+def worker_init_fn(worker_id):
+    # 每个 worker 设置相同的随机种子
+    np.random.seed(seed)
+    random.seed(seed)
 
 def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print("using {} device.".format(device))
 
     data_transform = {
-        "train": transforms.Compose([transforms.RandomResizedCrop(224),
-                                     transforms.RandomHorizontalFlip(),
-                                     transforms.ToTensor(),
-                                     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]),
-        "val": transforms.Compose([transforms.Resize(256),
-                                   transforms.CenterCrop(224),
-                                   transforms.ToTensor(),
-                                   transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])}
+        "train": transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ]),
+        "val": transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+    }
 
     data_root = os.path.abspath(os.path.join(os.getcwd(), "../../.."))  # get data root path
     image_path = os.path.join(data_root, "SCUT-FBP5500_1", "SCUT-FBP5500")  # flower data set path
@@ -48,14 +71,14 @@ def main():
 
     train_loader = torch.utils.data.DataLoader(train_dataset,
                                                batch_size=batch_size, shuffle=True,
-                                               num_workers=nw)
+                                               num_workers=nw, worker_init_fn=worker_init_fn)
 
     validate_dataset = datasets.ImageFolder(root=os.path.join(image_path, "val"),
                                             transform=data_transform["val"])
     val_num = len(validate_dataset)
     validate_loader = torch.utils.data.DataLoader(validate_dataset,
                                                   batch_size=batch_size, shuffle=False,
-                                                  num_workers=nw)
+                                                  num_workers=nw, worker_init_fn=worker_init_fn)
 
     print("using {} images for training, {} images for validation.".format(train_num,
                                                                            val_num))
@@ -81,14 +104,14 @@ def main():
 
     # construct an optimizer
     params = [p for p in net.parameters() if p.requires_grad]
-    optimizer = optim.Adam(params, lr=0.00002)
+    optimizer = optim.Adam(params, lr=0.000001)
 
     epochs = 60
     best_acc = 0.0
-    save_path = '.\FBPresNet50_16_005.pth'
+    save_path = '.\FBPresNet50_16_0001.pth'
     train_steps = len(train_loader)
     train_start_time = time.perf_counter()  # 记录训练开始时间，用于计算训练用时
-    log_file = 'training_log50_16_005.txt'
+    log_file = 'training_log50_16_0001.txt'
 
     # 写入CSV头
     with open(log_file, 'w') as f:
