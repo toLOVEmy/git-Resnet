@@ -106,12 +106,15 @@ def main():
     params = [p for p in net.parameters() if p.requires_grad]
     optimizer = optim.Adam(params, lr=0.000001)
 
+    # 设置余弦退火学习率调度器
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=60, eta_min=0)
+
     epochs = 60
     best_acc = 0.0
-    save_path = '.\FBPresNet50_16_0001.pth'
+    save_path = '.\FBPresNet50_16_yuxian_01.pth'
     train_steps = len(train_loader)
     train_start_time = time.perf_counter()  # 记录训练开始时间，用于计算训练用时
-    log_file = 'training_log50_16_0001.txt'
+    log_file = 'training_log50_16_yuxian_01.txt'
 
     # 写入CSV头
     with open(log_file, 'w') as f:
@@ -172,6 +175,9 @@ def main():
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save(net.state_dict(), save_path)
+
+        # 更新学习率
+        scheduler.step()
 
     print('Finished Training')
 
