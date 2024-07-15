@@ -4,6 +4,8 @@ import json
 import torch
 from PIL import Image
 from torchvision import transforms
+from sklearn.metrics import recall_score, confusion_matrix
+import pandas as pd
 
 from model import resnet50
 
@@ -18,11 +20,8 @@ def main():
          transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
     # load image
-    # 指向需要遍历预测的图像文件夹
     imgs_root = r'E:\xwc\pycharm_virtual_cnn\SCUT-FBP5500_1\SCUT-FBP5500\test'
     assert os.path.exists(imgs_root), f"file: '{imgs_root}' dose not exist."
-    # 读取指定文件夹下所有jpg图像路径
-    # img_path_list = [os.path.join(imgs_root, i) for i in os.listdir(imgs_root) if i.endswith(".jpg")]
     img_path_list = []  # 存储所有图片的路径
     class_list = {}  # 存储每个类别的图片路径
 
@@ -40,8 +39,6 @@ def main():
         # 将图片路径存储在class_list中，以子文件夹名为键
         class_list[subdir] = images
 
-    # 现在img_path_list包含了所有图片的路径，而class_list是一个字典，键为类别名，值为该类别的图片路径列表
-
     # read class_indict
     json_path = r'E:\xwc\pycharm_virtual_cnn\deep-learning-for-image-processing-master' \
                 r'\pytorch_classification\Test5_resnet\class_indices.json'
@@ -54,7 +51,7 @@ def main():
     model = resnet50(num_classes=5).to(device)
 
     # load model weights
-    weights_path = r'E:\xwc\pycharm_virtual_cnn\SCUT-FBP5500_1\SCUT-FBP5500\FBPresNet34.pth'
+    weights_path = r'.\FBPresNet50_16_yuxian_01.pth'
     assert os.path.exists(weights_path), f"file: '{weights_path}' dose not exist."
     model.load_state_dict(torch.load(weights_path, map_location=device))
 
@@ -62,6 +59,8 @@ def main():
     model.eval()
     batch_size = 8  # 每次预测时将多少张图片打包成一个batch
     correct_count = 0  # 用于累计预测正确的数量
+    all_preds = []  # 用于存储所有预测结果
+    all_labels = []  # 用于存储所有真实标签
     with torch.no_grad():
         for ids in range(0, len(img_path_list) // batch_size):
             img_list = []
@@ -72,8 +71,6 @@ def main():
                 img_list.append(img)
 
             # batch img
-            # 将img_list列表中的所有图像打包成一个batch
-            # 使用torch.stack()函数将img_list中的所有图像堆叠成一个批次，dim=0表示在第一个维度（批次维度）上堆叠
             batch_img = torch.stack(img_list, dim=0)
             # predict class
             output = model(batch_img.to(device)).cpu()
@@ -89,22 +86,47 @@ def main():
                         actual_class = class_name
                         break
                 # 比较预测类别和实际类别
+                all_preds.append(cla.numpy())
+                all_labels.append(int(actual_class))
+
                 if actual_class and class_indict[str(cla.numpy())] == actual_class:
                     correct_count += 1
-                    correct_str = "正确"
-                else:
-                    correct_str = "错误"
-                """
-                # 打印信息
-                print("image: {}  预测类别: {}  实际类别: {}  最大概率: {:.3}  预测是否正确: {}".format(
-                    img_path, class_indict[str(cla.numpy())], actual_class, pro.numpy(), correct_str
-                ))
-                """
-        # 打印总的预测正确数量
-        print("\n总测试数量有：{}，总的预测正确数量: {},准确率为：{}".format(len(img_path_list), correct_count, correct_count/len(img_path_list)))
 
+    # 打印总的预测正确数量
+    print("\n总测试数量有：{}，总的预测正确数量: {},准确率为：{}".format(len(img_path_list), correct_count, correct_count/len(img_path_list)))
 
+    # 计算每个类的召回率和宏观平均召回率
+    recall_per_class = recall_score(all_labels, all_preds, average=None)
+    macro_recall = recall_score(all_labels, all_preds, average='macro')
+    print("每个类的召回率:", recall_per_class)
+    print("宏观平均召回率:", macro_recall)
 
+    # 生成混淆矩阵
+    conf_matrix = confusion_matrix(all_labels, all_preds)
+    print("混淆矩阵:\n", conf_matrix)
+
+    # 将测试结果写入Excel文件
+    excel_path = 'TestResult.xlsx'
+    # 将结果转换为百分比形式，并保留两位小数
+    result_data = [f"{x * 100:.2f}" for x in recall_per_class] + [f"{macro_recall * 100:.2f}", f"{(correct_count / len(img_path_list)) * 100:.2f}"]
+
+    if os.path.exists(excel_path):
+        with pd.ExcelWriter(excel_path, mode='a', engine='openpyxl', if_sheet_exists='overlay') as writer:
+            existing_df = pd.read_excel(excel_path)
+            columns = existing_df.columns.tolist()
+            # 确保 result_data 的长度与现有的列数一致
+            if len(result_data) < len(columns):
+                result_data.extend([None] * (len(columns) - len(result_data)))
+            elif len(result_data) > len(columns):
+                raise ValueError("结果数据的列数多于Excel文件中的列数，请检查数据和Excel文件。")
+            result_df = pd.DataFrame([result_data], columns=columns)
+            result_df.to_excel(writer, index=False, header=False, startrow=len(existing_df) + 1)
+    else:
+        columns = [f'Recall_Class_{i}' for i in range(len(recall_per_class))] + ['Macro_Recall', 'Accuracy']
+        result_df = pd.DataFrame([result_data], columns=columns)
+        result_df.to_excel(excel_path, index=False)
+
+    print("测试结果已写入Excel文件")
 
 if __name__ == '__main__':
     main()
