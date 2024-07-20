@@ -47,7 +47,7 @@ def main():
     # model = torchvision.models.resnet34(num_classes=5).to(device)
 
     # load model weights
-    weights_path = r'.\weights\model-10-lr0.0001-bs16.pth'
+    weights_path = r'.\weights\model-60-lr0.0001-bs16.pth'
     assert os.path.exists(weights_path), f"file: '{weights_path}' dose not exist."
     model.load_state_dict(torch.load(weights_path, map_location=device))
 

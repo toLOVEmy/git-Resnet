@@ -9,9 +9,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import transforms, datasets
 from tqdm import tqdm
-from model import resnet34 as creatmodel
+from model import resnet34_StoDepth_lineardecay as creatmodel
 from torch.utils.tensorboard import SummaryWriter
 import torchprofile  # Import torchprofile for FLOPS calculation
+from label_smoothing import LabelSmoothingCrossEntropy  # Import the custom Label Smoothing loss
 
 # 设置随机种子
 seed = 42
@@ -77,6 +78,7 @@ def main():
         json_file.write(json_str)
     batch_size = 16
     lr = 0.0001
+    note = 'resnet34_stopth_label_smoothing'
     nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 0])  # windows下线程设为0就行，linux下可以设为8
     print('Using {} dataloader workers every process'.format(nw))
     train_loader = torch.utils.data.DataLoader(train_dataset,
@@ -108,8 +110,8 @@ def main():
     dummy_input = torch.randn(1, 3, 224, 224).to(device)  # 创建一个与输入数据相同形状的虚拟输入
     tb_writer.add_graph(net, dummy_input)  # 记录模型图
 
-    # define loss function
-    loss_function = nn.CrossEntropyLoss()
+    # define loss function with label smoothing
+    loss_function = LabelSmoothingCrossEntropy(eps=0.1, reduction='mean')
     # construct an optimizer
     params = [p for p in net.parameters() if p.requires_grad]
     optimizer = optim.Adam(params, lr=lr)
@@ -177,7 +179,7 @@ def main():
 
         if val_acc > best_acc:
             best_acc = val_acc
-            model_filename = "./weights/model-{}-lr{}-bs{}.pth".format(epochs, lr, batch_size)
+            model_filename = "./weights/model-{}-lr{}-bs{}-{}.pth".format(epochs, lr, batch_size, note)
             torch.save(net.state_dict(), model_filename)
             print(f"Epoch {epoch}: 保存新最佳模型 {model_filename}，验证准确率: {val_acc:.4f}")
 
