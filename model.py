@@ -1,24 +1,26 @@
-import torch.nn as nn
 import torch
+import torch.nn as nn
+from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from transformers import ViTModel, ViTConfig
 
 
-
+# 定义 BasicBlock
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, in_channel, out_channel, stride=1, downsample=None, **kwargs):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
         super(BasicBlock, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels=in_channel, out_channels=out_channel,
-                               kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channel)
-        self.relu = nn.ReLU()
-        self.conv2 = nn.Conv2d(in_channels=out_channel, out_channels=out_channel,
-                               kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channel)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
         self.downsample = downsample
+        self.stride = stride
 
     def forward(self, x):
         identity = x
+
         if self.downsample is not None:
             identity = self.downsample(x)
 
@@ -35,37 +37,25 @@ class BasicBlock(nn.Module):
         return out
 
 
+# 定义 Bottleneck Block
 class Bottleneck(nn.Module):
-    """
-    注意：原论文中，在虚线残差结构的主分支上，第一个1x1卷积层的步距是2，第二个3x3卷积层步距是1。
-    但在pytorch官方实现过程中是第一个1x1卷积层的步距是1，第二个3x3卷积层步距是2，
-    这么做的好处是能够在top1上提升大概0.5%的准确率。
-    可参考Resnet v1.5 https://ngc.nvidia.com/catalog/model-scripts/nvidia:resnet_50_v1_5_for_pytorch
-    """
     expansion = 4
 
-    def __init__(self, in_channel, out_channel, stride=1, downsample=None,
-                 groups=1, width_per_group=64):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
         super(Bottleneck, self).__init__()
-
-        width = int(out_channel * (width_per_group / 64.)) * groups
-
-        self.conv1 = nn.Conv2d(in_channels=in_channel, out_channels=width,
-                               kernel_size=1, stride=1, bias=False)  # squeeze channels
-        self.bn1 = nn.BatchNorm2d(width)
-        # -----------------------------------------
-        self.conv2 = nn.Conv2d(in_channels=width, out_channels=width, groups=groups,
-                               kernel_size=3, stride=stride, bias=False, padding=1)
-        self.bn2 = nn.BatchNorm2d(width)
-        # -----------------------------------------
-        self.conv3 = nn.Conv2d(in_channels=width, out_channels=out_channel*self.expansion,
-                               kernel_size=1, stride=1, bias=False)  # unsqueeze channels
-        self.bn3 = nn.BatchNorm2d(out_channel*self.expansion)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.conv3 = nn.Conv2d(out_channels, out_channels * 4, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(out_channels * 4)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
+        self.stride = stride
 
     def forward(self, x):
         identity = x
+
         if self.downsample is not None:
             identity = self.downsample(x)
 
@@ -86,61 +76,34 @@ class Bottleneck(nn.Module):
         return out
 
 
+# 定义 ResNet
 class ResNet(nn.Module):
-
-    def __init__(self,
-                 block,
-                 blocks_num,
-                 num_classes=1000,
-                 include_top=True,
-                 groups=1,
-                 width_per_group=64):
+    def __init__(self, block, layers, num_classes=1000):
         super(ResNet, self).__init__()
-        self.include_top = include_top
-        self.in_channel = 64
-
-        self.groups = groups
-        self.width_per_group = width_per_group
-
-        self.conv1 = nn.Conv2d(3, self.in_channel, kernel_size=7, stride=2,
-                               padding=3, bias=False)
-        self.bn1 = nn.BatchNorm2d(self.in_channel)
+        self.in_channels = 64
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 64, blocks_num[0])
-        self.layer2 = self._make_layer(block, 128, blocks_num[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, blocks_num[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, blocks_num[3], stride=2)
-        if self.include_top:
-            self.avgpool = nn.AdaptiveAvgPool2d((1, 1))  # output size = (1, 1)
-            self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        # Removed avgpool and fc layers
 
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-
-    def _make_layer(self, block, channel, block_num, stride=1):
+    def _make_layer(self, block, out_channels, blocks, stride=1):
         downsample = None
-        # 仅有50层及以上的虚线捷径分支可进入下面if语句
-        if stride != 1 or self.in_channel != channel * block.expansion:
+        if stride != 1 or self.in_channels != out_channels * block.expansion:
             downsample = nn.Sequential(
-                nn.Conv2d(self.in_channel, channel * block.expansion, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(channel * block.expansion))
+                nn.Conv2d(self.in_channels, out_channels * block.expansion, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels * block.expansion),
+            )
 
         layers = []
-        layers.append(block(self.in_channel,
-                            channel,
-                            downsample=downsample,
-                            stride=stride,
-                            groups=self.groups,
-                            width_per_group=self.width_per_group))
-        self.in_channel = channel * block.expansion
-
-        for _ in range(1, block_num):
-            layers.append(block(self.in_channel,
-                                channel,
-                                groups=self.groups,
-                                width_per_group=self.width_per_group))
+        layers.append(block(self.in_channels, out_channels, stride, downsample))
+        self.in_channels = out_channels * block.expansion
+        for _ in range(1, blocks):
+            layers.append(block(self.in_channels, out_channels))
 
         return nn.Sequential(*layers)
 
@@ -153,57 +116,116 @@ class ResNet(nn.Module):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-        x = self.layer4(x)
-
-        if self.include_top:
-            x = self.avgpool(x)
-            x = torch.flatten(x, 1)
-            x = self.fc(x)
 
         return x
 
 
-def resnet18(num_classes=1000, include_top=True):
-    return ResNet(BasicBlock, [2, 2, 2, 2], num_classes=num_classes, include_top=include_top)
+def resnet50(num_classes=1000):
+    return ResNet(Bottleneck, [3, 4, 6, 3], num_classes=num_classes)
 
 
-def resnet34(num_classes=1000, include_top=True):
-    # https://download.pytorch.org/models/resnet34-333f7ec4.pth
-    return ResNet(BasicBlock, [3, 4, 6, 3], num_classes=num_classes, include_top=include_top)
+class CustomViT(nn.Module):
+    def __init__(self):
+        super(CustomViT, self).__init__()
+
+        # 使用原始的 ViT Encoder 部分
+        self.encoder = ViTModel.from_pretrained('vit_model').encoder
+
+        # 可以选择性地保留 Pooler 层，如果你打算用它来提取特定的特征
+        self.pooler = ViTModel.from_pretrained('vit_model').pooler
+
+    def forward(self, x):
+        # 直接使用 encoder 部分处理嵌入
+        encoder_outputs = self.encoder(x)
+
+        # 取 class token 输出，通常为 encoder_outputs.last_hidden_state[:, 0]
+        last_hidden_state = encoder_outputs.last_hidden_state
+        class_token_output = last_hidden_state[:, 0]
+
+        # 如果需要使用 pooler 层，确保输入维度正确
+        # pooled_output = self.pooler(class_token_output)  # 仅当需要使用 pooler 时
+
+        return class_token_output
 
 
-def resnet50(num_classes=1000, include_top=True):
-    # https://download.pytorch.org/models/resnet50-19c8e357.pth
-    return ResNet(Bottleneck, [3, 4, 6, 3], num_classes=num_classes, include_top=include_top)
+class ResNet50WithTransformer(nn.Module):
+    def __init__(self, num_classes=5):
+        super(ResNet50WithTransformer, self).__init__()
+        self.resnet50 = resnet50()  # Set pretrained=False, we'll load weights manually
+
+        # 添加一个适配层，将特征维度从 2048 映射到 768
+        self.feature_extractor = nn.Linear(1024, 768)
+
+        # 类别 token 和位置嵌入
+        self.class_token = nn.Parameter(torch.zeros(1, 1, 768))
+        self.position_embedding = nn.Parameter(
+            torch.zeros(1, 197, 768))  # 197 = 1 (class_token) + 196 (feature positions)
+
+        # 使用本地的 ViT 模型
+        self.vit = CustomViT()
+
+        # 最终的全连接层
+        self.fc = nn.Linear(768, num_classes)
+
+        # 定义 Dropout 层
+        self.dropout = nn.Dropout(p=0.1)
+
+        # self._init_weights()
+
+        # Load the pretrained weights for ResNet50
+        # self._load_pretrained_weights()
+
+    def _init_weights(self):
+        nn.init.kaiming_normal_(self.fc.weight)
+        if self.fc.bias is not None:
+            nn.init.constant_(self.fc.bias, 0)
+
+    def _load_pretrained_weights(self):
+        # Load the pretrained weights
+        pretrained_weights_path = 'resnet50-19c8e357.pth'
+        pretrained_weights = torch.load(pretrained_weights_path, map_location='cpu')
+
+        # Remove the fully connected layer weights from the pretrained state dict
+        # state_dict = {k: v for k, v in pretrained_weights.items() if not k.startswith('fc.')}
+        state_dict = {k: v for k, v in pretrained_weights.items() if not k.startswith(('layer4.', 'fc.'))}
+
+        # Load the weights into the model
+        self.resnet50.load_state_dict(state_dict, strict=False)
+
+    def forward(self, x):
+        x = self.resnet50(x)  # 输出: torch.Size([B, 2048, 7, 7])
+
+        B, C, H, W = x.shape
+
+        # 展平特征图到一维
+        x = x.view(B, C, -1).permute(0, 2, 1)  # Reshape to (B, 49, 2048)
+
+        # 将特征维度从 2048 映射到 768
+        x = self.feature_extractor(x)  # 变换到 (B, 49, 768)
+
+        # Add class token
+        class_token = self.class_token.expand(B, -1, -1)
+
+        x = torch.cat((class_token, x), dim=1)
+
+        x = x + self.position_embedding[:, :x.size(1), :].detach()  # detach position_embedding
+
+        # Apply Dropout only in training mode
+        # x = self.dropout(x)
+
+        # 使用本地模型
+        # 注意，这里传入的是 `pixel_values`，需要将输入转为符合 ViT 模型要求的格式
+        outputs = self.vit(x)
+
+        x = outputs
+
+        x = self.fc(x)
+        return x
 
 
-def resnet101(num_classes=1000, include_top=True):
-    # https://download.pytorch.org/models/resnet101-5d3b4d8f.pth
-    return ResNet(Bottleneck, [3, 4, 23, 3], num_classes=num_classes, include_top=include_top)
-
-
-def resnet152(num_classes=1000, include_top=True):
-    # https://download.pytorch.org/models/resnet101-5d3b4d8f.pth
-    return ResNet(Bottleneck, [3, 8, 36, 3], num_classes=num_classes, include_top=include_top)
-
-
-def resnext50_32x4d(num_classes=1000, include_top=True):
-    # https://download.pytorch.org/models/resnext50_32x4d-7cdf4587.pth
-    groups = 32
-    width_per_group = 4
-    return ResNet(Bottleneck, [3, 4, 6, 3],
-                  num_classes=num_classes,
-                  include_top=include_top,
-                  groups=groups,
-                  width_per_group=width_per_group)
-
-
-def resnext101_32x8d(num_classes=1000, include_top=True):
-    # https://download.pytorch.org/models/resnext101_32x8d-8ba56ff5.pth
-    groups = 32
-    width_per_group = 8
-    return ResNet(Bottleneck, [3, 4, 23, 3],
-                  num_classes=num_classes,
-                  include_top=include_top,
-                  groups=groups,
-                  width_per_group=width_per_group)
+# Test the forward pass with a dummy input
+if __name__ == '__main__':
+    model = ResNet50WithTransformer(num_classes=5).to('cuda:0' if torch.cuda.is_available() else 'cpu')
+    dummy_input = torch.randn(1, 3, 224, 224).to(next(model.parameters()).device)
+    output = model(dummy_input)
+    print(output.shape)  # Expected output shape: torch.Size([1, 5])

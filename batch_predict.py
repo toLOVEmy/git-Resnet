@@ -7,7 +7,7 @@ from torchvision import transforms
 from sklearn.metrics import recall_score, confusion_matrix
 import pandas as pd
 
-from model import resnet34 as creatmodel
+from model import ResNet50WithTransformer as creatModel
 
 def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -43,11 +43,11 @@ def main():
     json_file = open(json_path, "r")
     class_indict = json.load(json_file)
     # create model
-    model = creatmodel(num_classes=5).to(device)
+    model = creatModel(num_classes=5).to(device)
     # model = torchvision.models.resnet34(num_classes=5).to(device)
 
     # load model weights
-    weights_path = r'.\weights\model-60-lr0.0001-bs16.pth'
+    weights_path = r'.\weights\model-60-lr0.0001-bs16-ResNet50WithTransformer_noLayer4.pth'
     assert os.path.exists(weights_path), f"file: '{weights_path}' dose not exist."
     model.load_state_dict(torch.load(weights_path, map_location=device))
 

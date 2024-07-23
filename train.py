@@ -9,10 +9,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision import transforms, datasets
 from tqdm import tqdm
-from model import resnet34_StoDepth_lineardecay as creatmodel
+from model import ResNet50WithTransformer as creatModel
 from torch.utils.tensorboard import SummaryWriter
 import torchprofile  # Import torchprofile for FLOPS calculation
-from label_smoothing import LabelSmoothingCrossEntropy  # Import the custom Label Smoothing loss
+from label_smoothing import LabelSmoothingCrossEntropy
 
 # 设置随机种子
 seed = 42
@@ -78,7 +78,7 @@ def main():
         json_file.write(json_str)
     batch_size = 16
     lr = 0.0001
-    note = 'resnet34_stopth_label_smoothing'
+    note = 'ResNet50WithTransformer_noLayer4'
     nw = min([os.cpu_count(), batch_size if batch_size > 1 else 0, 0])  # windows下线程设为0就行，linux下可以设为8
     print('Using {} dataloader workers every process'.format(nw))
     train_loader = torch.utils.data.DataLoader(train_dataset,
@@ -93,12 +93,12 @@ def main():
     print("using {} images for training, {} images for validation.".format(train_num, val_num))
 
     # 1. 定义模型并加载权重
-    net = creatmodel()
-    model_weight_path = r'./resnet34-333f7ec4.pth'
-    assert os.path.exists(model_weight_path), "file {} does not exist.".format(model_weight_path)
-    net.load_state_dict(torch.load(model_weight_path, map_location='cpu'))
-    in_channel = net.fc.in_features
-    net.fc = nn.Linear(in_channel, 5)
+    net = creatModel(num_classes=5)
+    # model_weight_path = r'./weights/model-60-lr0.0001-bs16.pth'
+    # assert os.path.exists(model_weight_path), "file {} does not exist.".format(model_weight_path)
+    # net.load_state_dict(torch.load(model_weight_path, map_location='cpu'))
+    # in_channel = net.fc.in_features
+    # net.fc = nn.Linear(in_channel, 5)
     net.to(device)
 
     # 打印模型参数和FLOPS
@@ -110,8 +110,9 @@ def main():
     dummy_input = torch.randn(1, 3, 224, 224).to(device)  # 创建一个与输入数据相同形状的虚拟输入
     tb_writer.add_graph(net, dummy_input)  # 记录模型图
 
-    # define loss function with label smoothing
-    loss_function = LabelSmoothingCrossEntropy(eps=0.1, reduction='mean')
+    # define loss function
+    loss_function = nn.CrossEntropyLoss()
+    # loss_function = LabelSmoothingCrossEntropy()
     # construct an optimizer
     params = [p for p in net.parameters() if p.requires_grad]
     optimizer = optim.Adam(params, lr=lr)
